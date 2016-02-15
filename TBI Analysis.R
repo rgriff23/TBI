@@ -49,6 +49,18 @@ oxygen_wait <- c(data$oxygen_time - data$time_arrival)  #mins
 fluids_wait <- c(data$fluids_time - data$time_arrival)  #secs
 data <- cbind(data, cdmd_wait, oxygen_wait, fluids_wait)
 
+# Define broad gcs categories: mild, moderate, and severe
+gcs_cat <- rep(0, nrow(data))
+gcs_cat[data$gcs_tot < 9] <- "severe"
+gcs_cat[data$gcs_tot > 8 & data$gcs_tot < 14] <- "moderate"
+gcs_cat[data$gcs_tot > 13] <- "mild"
+gcs_cat[gcs_cat=="0"] <- NA
+data <- cbind(data, gcs_cat)
+
+# Add gcs factor variable
+gcs <- as.factor(data$gcs_tot)
+data <- cbind(data, gcs)
+
 ########################################################################################################################
 ########################################################################################################################
 # DEFINE NEW BINARY VARIABLES FOR sys_bp, pulse_ox, AND fluids
@@ -56,23 +68,16 @@ data <- cbind(data, cdmd_wait, oxygen_wait, fluids_wait)
 ########################################################################################################################
 
 # Hypotension = 1
-bp_low <- data$sys_bp
-bp_low[which(bp_low < 90)] <- 1
-bp_low[which(bp_low > 89)] <- 0
+bp_low <- ifelse(data$sys_bp < 90, 1, 0)
 
 # Hypertension = 1
-bp_high <- data$sys_bp
-bp_high[which(bp_high < 160)] <- 0
-bp_high[which(bp_high > 159)] <- 1
+bp_high <- ifelse(data$sys_bp > 159, 1, 0)
 
 # Hypoxic = 1
-ox_low <- data$pulse_ox
-ox_low[which(ox_low < 92)] <- 1
-ox_low[which(ox_low > 91)] <- 0
+ox_low <- ifelse(data$pulse_ox < 92, 1, 0)
 
 # Fluids given = 1
-fluids0 <- data$fluids
-fluids0[which(fluids0 > 0)] <- 1
+fluids0 <- ifelse(data$fluids > 0, 1, 0)
 
 # Add new binary variables to dataframe
 data <- cbind(data, bp_low, bp_high, ox_low, fluids0)
@@ -82,14 +87,6 @@ data <- cbind(data, bp_low, bp_high, ox_low, fluids0)
 # VISUALIZATIONS 
 ########################################################################################################################
 ########################################################################################################################
-
-# Define broad gcs categories: mild, moderate, and severe
-gcs_cat <- rep(0, nrow(data))
-gcs_cat[data$gcs_tot < 9] <- "severe"
-gcs_cat[data$gcs_tot > 8 & data$gcs_tot < 14] <- "moderate"
-gcs_cat[data$gcs_tot > 13] <- "mild"
-gcs_cat[gcs_cat=="0"] <- NA
-data <- cbind(data, gcs_cat)
 
 ############################################################
 ### waiting time distributions / predictors of waiting time
@@ -124,8 +121,6 @@ mtext("mean = 22 minutes", line=1, cex=0.6)
 # Boxplots of log MD waiting times across different GCS (are sicker patients being seen more quickly?)
 quartz()
 layout(matrix(1,1,1))
-gcs <- as.factor(data$gcs_tot)
-data <- cbind(data, gcs)
 boxplot(log1p(cdmd_wait)~gcs, col="gray", main="Log MD wait times across incoming GCS", ylab="Log1p MD wait time", xlab="Incoming patient GCS")
 abline(h=mean(log1p(cdmd_wait), na.rm=T), col="red")
 
@@ -143,8 +138,11 @@ quartz()
 layout(matrix(1:2,1,2))
 boxplot(log1p(oxygen_wait)~ox_low, data=data, col="skyblue", names=c("Normal ox", "Low ox"), main="Oxygen wait times", ylab="log1p(Oxygen wait time)")
 boxplot(log1p(fluids_wait)~bp_low, data=data, col="pink", names=c("Normal/high bp", "Low bp"), main="Fluid wait times", ylab="log1p(Fluids wait time)")
-summary(glm(log1p(oxygen_wait)~ox_low)) #
-summary(glm(log1p(fluids_wait)~bp_low)) #*
+summary(lm(log1p(oxygen_wait)~ox_low)) # not significant
+summary(lm(log1p(fluids_wait)~bp_low)) # p < 0.05, low blood pressure leads to faster fluids time
+# Does GCS predict waiting times to oxygen/fluids?
+summary(lm(log1p(oxygen_wait)~ox_low+gcs_cat)) 
+summary(lm(log1p(fluids_wait)~bp_low+gcs_cat))
 
 #########################################
 ### treatment of hypoxia and hypotension
@@ -167,7 +165,15 @@ layout(matrix(1:2,1,2))
 barplot(ox, beside=T, names.arg=c("Normal", "Low", "NA"), main="Frequency of patients receiving oxygen", col=c("skyblue", "lightgray"), xlab="Pulse oxygen")
 legend("bottomleft", xpd=TRUE, inset=c(-0.2,-0.25),  legend=c("Oxygen", "No oxygen"), fill=c("skyblue","lightgray"), cex=0.75)
 # Proportions
-barplot(ox[1,]/colSums(ox), ylim=c(0,1), names.arg=c("Normal", "Low", "NA"), main="Proportion of patients receiving oxygen", col="skyblue", xlab="Pulse oxygen")
+err.upper <- c()
+err.lower <- c()
+for (i in 1:ncol(ox)) {
+  test <- prop.test(ox[1,i], colSums(ox)[i])
+  err.upper[i] <- test$conf.int[2]
+  err.lower[i] <- test$conf.int[1]
+}
+bplot <- barplot(ox[1,]/colSums(ox), ylim=c(0,1), names.arg=c("Normal", "Low", "NA"), main="Proportion of patients receiving oxygen", col="skyblue", xlab="Pulse oxygen")
+arrows(x0=c(bplot), y0=err.lower, x1=c(bplot), y1=err.upper, length=0.07, angle=90, code=3)
 
 # Fluids given to patients with different blood pressures
 fl0 <- table(data.frame(data$fluids0, data$bp_low+data$bp_high))[,1]  #normal
@@ -180,36 +186,105 @@ layout(matrix(1:2,1,2))
 barplot(fl, beside=T, names.arg=c("Low", "Normal", "High", "NA"), main="Frequency of patients receiving fluids", col=c("pink","lightgray"), xlab="Blood pressure")
 legend("bottomleft", xpd=TRUE, inset=c(-0.2,-0.25),  legend=c("Fluids", "No fluids"), fill=c("pink","lightgray"), cex=0.75)
 # Proportions
-barplot(fl[1,]/colSums(fl), ylim=c(0,1), names.arg=c("Low", "Normal", "High", "NA"), main="Proportion of patients receiving fluids", col="pink", xlab="Blood pressure")
+err.upper <- c()
+err.lower <- c()
+for (i in 1:ncol(fl)) {
+  test <- prop.test(fl[1,i], colSums(fl)[i])
+  err.upper[i] <- test$conf.int[2]
+  err.lower[i] <- test$conf.int[1]
+}
+bplot <- barplot(fl[1,]/colSums(fl), ylim=c(0,1), names.arg=c("Low", "Normal", "High", "NA"), main="Proportion of patients receiving fluids", col="pink", xlab="Blood pressure")
+arrows(x0=c(bplot), y0=err.lower, x1=c(bplot), y1=err.upper, length=0.07, angle=90, code=3)
+
 
 # Appropriate administration of oxygen at different GCS levels
 quartz()
 layout(matrix(1:4, 2, 2, byrow=T))
 # Proportion hypoxic who get oxygen
 hypox_ox <- table(data$gcs_cat[data$ox_low==1 & data$oxygen==1])/table(data$gcs_cat[data$ox_low==1])
+hypox_ox.upper <- c()
+hypox_ox.lower <- c()
+for (i in 1:length(hypox_ox)) {
+  test <- prop.test(table(data$gcs_cat[data$ox_low==1 & data$oxygen==1])[i], table(data$gcs_cat[data$ox_low==1])[i])
+  hypox_ox.upper[i] <- test$conf.int[2]
+  hypox_ox.lower[i] <- test$conf.int[1]
+}
 # Proportion hypoxic who do NOT get oxygen
 hypox_nox <- table(data$gcs_cat[data$ox_low==1 & data$oxygen==0])/table(data$gcs_cat[data$ox_low==1])
+hypox_nox.upper <- c()
+hypox_nox.lower <- c()
+for (i in 1:length(hypox_nox)) {
+  test <- prop.test(table(data$gcs_cat[data$ox_low==1 & data$oxygen==0])[i], table(data$gcs_cat[data$ox_low==1])[i])
+  hypox_nox.upper[i] <- test$conf.int[2]
+  hypox_nox.lower[i] <- test$conf.int[1]
+}
 # Proportion not hypoxic who get oxygen
 nhypox_ox <- table(data$gcs_cat[data$ox_low==0 & data$oxygen==1])/table(data$gcs_cat[data$ox_low==0])
+nhypox_ox.upper <- c()
+nhypox_ox.lower <- c()
+for (i in 1:length(nhypox_ox)) {
+  test <- prop.test(table(data$gcs_cat[data$ox_low==0 & data$oxygen==1])[i], table(data$gcs_cat[data$ox_low==0])[i])
+  nhypox_ox.upper[i] <- test$conf.int[2]
+  nhypox_ox.lower[i] <- test$conf.int[1]
+}
 # Proportion not hypoxic who don't get oxygen
 nhypox_nox <- table(data$gcs_cat[data$ox_low==0 & data$oxygen==0])/table(data$gcs_cat[data$ox_low==0])
+nhypox_nox.upper <- c()
+nhypox_nox.lower <- c()
+for (i in 1:length(nhypox_ox)) {
+  test <- prop.test(table(data$gcs_cat[data$ox_low==0 & data$oxygen==0])[i], table(data$gcs_cat[data$ox_low==0])[i])
+  nhypox_nox.upper[i] <- test$conf.int[2]
+  nhypox_nox.lower[i] <- test$conf.int[1]
+}
 # Proportion hypotensive who get fluids
 hypot_fl <- table(data$gcs_cat[data$bp_low==1 & data$fluids0==1])/table(data$gcs_cat[data$bp_low==1])
+hypot_fl.upper <- c()
+hypot_fl.lower <- c()
+for (i in 1:length(hypot_fl)) {
+  test <- prop.test(table(data$gcs_cat[data$bp_low==1 & data$fluids0==1])[i], table(data$gcs_cat[data$bp_low==1])[i])
+  hypot_fl.upper[i] <- test$conf.int[2]
+  hypot_fl.lower[i] <- test$conf.int[1]
+}
 # Proportion hypotensive who do NOT get fluids
 hypot_nfl <- table(data$gcs_cat[data$bp_low==1 & data$fluids0==0])/table(data$gcs_cat[data$bp_low==1])
+hypot_nfl.upper <- c()
+hypot_nfl.lower <- c()
+for (i in 1:length(hypot_nfl)) {
+  test <- prop.test(table(data$gcs_cat[data$bp_low==1 & data$fluids0==0])[i], table(data$gcs_cat[data$bp_low==1])[i])
+  hypot_nfl.upper[i] <- test$conf.int[2]
+  hypot_nfl.lower[i] <- test$conf.int[1]
+}
 # Proportion not hypotensive who get fluids
 nhypot_fl <- table(data$gcs_cat[data$bp_low==0 & data$fluids0==1])/table(data$gcs_cat[data$bp_low==0])
+nhypot_fl.upper <- c()
+nhypot_fl.lower <- c()
+for (i in 1:length(nhypot_fl)) {
+  test <- prop.test(table(data$gcs_cat[data$bp_low==0 & data$fluids0==1])[i], table(data$gcs_cat[data$bp_low==0])[i])
+  nhypot_fl.upper[i] <- test$conf.int[2]
+  nhypot_fl.lower[i] <- test$conf.int[1]
+}
 # Proportion not hypotensive who don't get fluids
 nhypot_nfl <- table(data$gcs_cat[data$bp_low==0 & data$fluids0==0])/table(data$gcs_cat[data$bp_low==0])
+nhypot_nfl.upper <- c()
+nhypot_nfl.lower <- c()
+for (i in 1:length(nhypot_nfl)) {
+  test <- prop.test(table(data$gcs_cat[data$bp_low==0 & data$fluids0==0])[i], table(data$gcs_cat[data$bp_low==0])[i])
+  nhypot_nfl.upper[i] <- test$conf.int[2]
+  nhypot_nfl.lower[i] <- test$conf.int[1]
+}
 # Needed treatments given
-barplot(rbind(hypox_ox, hypot_fl), ylim=c(0,1), beside=T, main="Needed treatment was given", col=c("skyblue", "pink"), ylab="Frequency")
+bplot <- barplot(rbind(hypox_ox, hypot_fl), ylim=c(0,1), beside=T, main="Needed treatment was given", col=c("skyblue", "pink"), ylab="Frequency")
+arrows(x0=c(bplot), y0=c(rbind(hypox_ox.lower, hypot_fl.lower)), x1=c(bplot), y1=c(rbind(hypox_ox.upper, hypot_fl.upper)), length=0.07, angle=90, code=3)
 # Needed treatments not given
-barplot(rbind(hypox_nox, hypot_nfl), ylim=c(0,1), beside=T, main="Needed treatment NOT given", col=c("skyblue", "pink"))
+bplot <- barplot(rbind(hypox_nox, hypot_nfl), ylim=c(0,1), beside=T, main="Needed treatment NOT given", col=c("skyblue", "pink"))
+arrows(x0=c(bplot), y0=c(rbind(hypox_nox.lower, hypot_nfl.lower)), x1=c(bplot), y1=c(rbind(hypox_nox.upper, hypot_nfl.upper)), length=0.07, angle=90, code=3)
 # Unneeded treatments given
-barplot(rbind(nhypox_ox, nhypot_fl), ylim=c(0,1), beside=T, main="Unneeded treatment was given", col=c("skyblue", "pink"), xlab="TBI category", ylab="Frequency")
+bplot <- barplot(rbind(nhypox_ox, nhypot_fl), ylim=c(0,1), beside=T, main="Unneeded treatment was given", col=c("skyblue", "pink"), xlab="TBI category", ylab="Frequency")
+arrows(x0=c(bplot), y0=c(rbind(nhypox_ox.lower, nhypot_fl.lower)), x1=c(bplot), y1=c(rbind(nhypox_ox.upper, nhypot_fl.upper)), length=0.07, angle=90, code=3)
 legend("bottomleft", xpd=TRUE, inset=c(-0.25,-0.5),  legend=c("Oxygen", "Fluids"), fill=c("skyblue","pink"), cex=0.75)
 # Unneeded treatment not given
-barplot(rbind(nhypox_nox, nhypot_nfl), ylim=c(0,1), beside=T, main="Unneeded treatment NOT given", col=c("skyblue", "pink"), xlab="TBI category")
+bplot <- barplot(rbind(nhypox_nox, nhypot_nfl), ylim=c(0,1), beside=T, main="Unneeded treatment NOT given", col=c("skyblue", "pink"), xlab="TBI category")
+arrows(x0=c(bplot), y0=c(rbind(nhypox_nox.lower, nhypot_nfl.lower)), x1=c(bplot), y1=c(rbind(nhypox_nox.upper, nhypot_nfl.upper)), length=0.07, angle=90, code=3)
 
 # Logistic regression model predicting patient's receiving oxygen or fluids
 summary(glm(oxygen~ox_low+gcs_cat, data=data, family="binomial"))
@@ -229,7 +304,6 @@ summary(glm(death~ox_low+bp_low+bp_high+gcs_cat, data=data[round(seq(1, 1966, le
 summary(glm(death~ox_low+bp_low+bp_high+gcs_tot, data=data[round(seq(1, 1966, length.out=1966/2)),], family="binomial"))
 round(seq(1, 1966, length.out=1966/2))
 
-
 ########################
 ### predictors of death
 ########################
@@ -242,10 +316,17 @@ freq <- table(data[,c("death", "gcs_tot")])
 barplot(freq, beside=TRUE, col=c("skyblue", "darkred"), xlab="GCS", ylab="Frequency", main="Death and Recovery vs. Incoming GCS")
 legend("topleft", xpd=TRUE, inset=c(-0.1,-0.2), legend=c("Death", "Recovery"), fill=c("darkred", "skyblue"))
 # Proportions
+err.upper <- c()
+err.lower <- c()
+for (i in 1:ncol(freq)) {
+  test <- prop.test(freq[2,i], colSums(freq)[i])
+  err.upper[i] <- test$conf.int[2]
+  err.lower[i] <- test$conf.int[1]
+}
 quartz()
 layout(matrix(1, 1, 1))
-barplot(t(t(freq)/colSums(freq)), beside=FALSE, col=c("skyblue", "darkred"), xlab="GCS", ylab="Proportions", main="Death and Recovery vs. Incoming GCS")
-legend("topleft", xpd=TRUE, inset=c(-0.1,-0.2),  legend=c("Death", "Recovery"), fill=c("darkred", "skyblue"))
+bplot <- barplot(freq[2,]/colSums(freq), beside=FALSE, col="darkred", xlab="GCS", ylab="Probability of death", main="Death rate vs. Incoming GCS", ylim=c(0,1))
+arrows(x0=c(bplot), y0=err.lower, x1=c(bplot), y1=err.upper, length=0.07, angle=90, code=3)
 
 # Linear regression of MD waiting times as a function of incoming GCS
 summary(lm(log1p(cdmd_wait)~as.factor(data$gcs_tot)))
