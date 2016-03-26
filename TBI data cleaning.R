@@ -1,24 +1,77 @@
+########################################################################################################################
+# PREPARATIONS
+########################################################################################################################
 
 # Read data into R
 data <- read.csv("~/Desktop/TBI/PietrobonTBIRegistry_DATA_2015-09-17_1418.csv", header=TRUE, stringsAsFactors=FALSE)
 
 ########################################################################################################################
-########################################################################################################################
-# CLEAN TIME DATA AND DEFINE NEW WAIT TIME VARIABLES
-########################################################################################################################
+# CHECK TIME DATA
 ########################################################################################################################
 
-# How many entries for time variables?
-sum(data$time_arrival != "")	#1961
-sum(data$cdmd_arrival != "")	#1959
-sum(data$oxygen_time != "")		#79	
-sum(data$fluids_time != "")		#693
+# How many total rows of data?
+nrow(data)	#1986
 
-# Convert time variables to class POSIXct (arbitrarily make date 1/1/15)
+# How many non-missing entries for time variables?
+sum(data$time_arrival != "")	#1961 (98.7%)
+sum(data$cdmd_arrival != "")	#1959 (98.6%)
+sum(data$labs_time != "")		#1677 (84.4%)
+sum(data$skullxr_time != "")	#1512 (76.1%)
+sum(data$fluids_time != "")		#693 (34.9%)
+sum(data$time_tbisurg != "")	#417 (21%)
+sum(data$time_surgtoicu != "")	#246 (12.4%)
+sum(data$time_death != "")		#172 (8.7%)
+sum(data$oxygen_time != "")		#79	(4%)
+sum(data$mannitol_time != "")	#34 (1.7%)
+sum(data$ctbrain_time != "")	#19 (1%)
+sum(data$ccollar_time != "")	#16 (0.9%)
+
+# Convert time variables to class POSIXct (fully de-identify data by uniformly fixing the date of arrival at 1/1/15)
 data$time_arrival <- as.POSIXct(strptime(paste("01/01/2015", data$time_arrival), "%m/%d/%Y %H:%M"))
 data$cdmd_arrival <- as.POSIXct(strptime(paste("01/01/2015", data$cdmd_arrival), "%m/%d/%Y %H:%M"))
 data$oxygen_time <- as.POSIXct(strptime(paste("01/01/2015", data$oxygen_time), "%m/%d/%Y %H:%M"))
 data$fluids_time <- as.POSIXct(strptime(paste("01/01/2015", data$fluids_time), "%m/%d/%Y %H:%M"))
+data$labs_time <- as.POSIXct(strptime(paste("01/01/2015", data$labs_time), "%m/%d/%Y %H:%M"))
+data$skullxr_time <- as.POSIXct(strptime(paste("01/01/2015", data$skullxr_time), "%m/%d/%Y %H:%M"))
+data$ctbrain_time <- as.POSIXct(strptime(paste("01/01/2015", data$ctbrain_time), "%m/%d/%Y %H:%M"))
+data$mannitol_time <- as.POSIXct(strptime(paste("01/01/2015", data$mannitol_time), "%m/%d/%Y %H:%M"))
+data$ccollar_time <- as.POSIXct(strptime(paste("01/01/2015", data$ccollar_time), "%m/%d/%Y %H:%M"))
+data$time_tbisurg <- as.POSIXct(strptime(paste("01/01/2015", data$time_tbisurg), "%m/%d/%Y %H:%M"))
+data$time_surgtoicu <- as.POSIXct(strptime(paste("01/01/2015", data$time_surgtoicu), "%m/%d/%Y %H:%M"))
+data$time_death <- as.POSIXct(strptime(paste("01/01/2015", data$time_death), "%m/%d/%Y %H:%M"))
+
+# Check for times that don't make sense
+length(which((data$cdmd_arrival-data$time_arrival)<0))	# 19 cdmd arrivals 'before' patient arrival
+data[which((data$cdmd_arrival-data$time_arrival)<0),c("study_id", "time_arrival", "cdmd_arrival")]
+length(which((data$oxygen_time-data$time_arrival)<0))	# 3 oxygen 'before' patient arrival
+data[which((data$oxygen_time-data$time_arrival)<0),c("study_id", "time_arrival", "oxygen_time")]
+length(which((data$fluids_time-data$time_arrival)<0))	# 42 fluids 'before' patient arrival
+data[which((data$fluids_time-data$time_arrival)<0),c("study_id", "time_arrival", "fluids_time")]
+length(which((data$labs_time-data$time_arrival)<0))	# 202 labs 'before' patient arrival
+data[which((data$labs_time-data$time_arrival)<0),c("study_id", "time_arrival", "labs_time")]
+length(which((data$skullxr_time-data$time_arrival)<0))	# 175 x-rays 'before' patient arrival
+data[which((data$skullxr_time-data$time_arrival)<0),c("study_id", "time_arrival", "skullxr_time")]
+length(which((data$ctbrain_time-data$time_arrival)<0))	# 4 ct scans 'before' patient arrival
+data[which((data$ctbrain_time-data$time_arrival)<0),c("study_id", "time_arrival", "date_arrival", "ctbrain_time", "ctbrain_day")]
+length(which((data$mannitol_time-data$time_arrival)<0))	# 3 mannitol 'before' patient arrival
+data[which((data$mannitol_time-data$time_arrival)<0),c("study_id", "time_arrival", "mannitol_time")]
+length(which((data$ccollar_time-data$time_arrival)<0))	# 0 collar 'before' patient arrival
+
+# For ctbrain/surgery/icu/death, the date may be different (later) than the date of patient arrival
+# Check for dates that don't make sense
+length(which(difftime(strptime(data$date_tbisurg, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0)) # 51 surgeries 'before' patient arrival
+data[which(difftime(strptime(data$date_tbisurg, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0),c("study_id", "date_arrival", "date_tbisurg")]
+length(which(difftime(strptime(data$ctbrain_day, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0)) # 0 ct scans 'before' patient arrival
+length(which(difftime(strptime(data$date_surgtoicu, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0)) # 22 icu 'before' patient arrival
+data[which(difftime(strptime(data$date_surgtoicu, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0),c("study_id", "date_arrival", "date_surgtoicu")]
+length(which(difftime(strptime(data$date_surgtoicu, "%m/%d/%Y"), strptime(data$date_tbisurg, "%m/%d/%Y"), units="days")<0)) # 22 icu 'before' surgery
+data[which(difftime(strptime(data$date_surgtoicu, "%m/%d/%Y"), strptime(data$date_tbisurg, "%m/%d/%Y"), units="days")<0),c("study_id", "date_surgtoicu", "date_tbisurg")]
+length(which(difftime(strptime(data$date_death, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0)) # 5 death 'before' patient arrival
+data[which(difftime(strptime(data$date_death, "%m/%d/%Y"), strptime(data$date_arrival, "%m/%d/%Y"), units="days")<0),c("study_id", "date_death", "date_arrival")]
+
+########################################################################################################################
+# FIX TIME DATA
+########################################################################################################################
 
 # Check for patient care times that appear to occur 'before' patient arrival times
 # Make patient care dates 01/02/15 in cases where that would lead to a time difference
@@ -43,13 +96,21 @@ fluids_drop2 <- c(3, 495, 1067, 1348)	# positive outliers (>8 hours)
 data <- data[-fluids_drop2,]
 rownames(data) <- 1:nrow(data)
 
+########################################################################################################################
+# DEFINE NEW WAITING TIME VARIABLES		
+#######################################################################################################################
+
 # Define new waiting time variables and add to dataframe
 cdmd_wait <- c(data$cdmd_arrival - data$time_arrival) #secs 
 oxygen_wait <- c(data$oxygen_time - data$time_arrival)  #mins
 fluids_wait <- c(data$fluids_time - data$time_arrival)  #secs
 data <- cbind(data, cdmd_wait, oxygen_wait, fluids_wait)
 
-# Define broad gcs categories: mild, moderate, and severe
+########################################################################################################################
+# DEFINE NEW CATEGORICAL VARIABLES FOR gcs_tot, sys_bp, pulse_ox, AND fluids
+########################################################################################################################
+
+# Define three broad gcs categories: mild, moderate, and severe
 gcs_cat <- rep(0, nrow(data))
 gcs_cat[data$gcs_tot < 9] <- "severe"
 gcs_cat[data$gcs_tot > 8 & data$gcs_tot < 14] <- "moderate"
@@ -60,12 +121,6 @@ data <- cbind(data, gcs_cat)
 # Add gcs factor variable
 gcs <- as.factor(data$gcs_tot)
 data <- cbind(data, gcs)
-
-########################################################################################################################
-########################################################################################################################
-# DEFINE NEW BINARY VARIABLES FOR sys_bp, pulse_ox, AND fluids
-########################################################################################################################
-########################################################################################################################
 
 # Hypotension = 1
 bp_low <- ifelse(data$sys_bp < 90, 1, 0)
@@ -81,6 +136,12 @@ fluids0 <- ifelse(data$fluids > 0, 1, 0)
 
 # Add new binary variables to dataframe
 data <- cbind(data, bp_low, bp_high, ox_low, fluids0)
+
+########################################################################################################################
+# DELETE UNWANTED COLUMNS AND WRITE NEW DATA FILE FOR FINAL ANALYSIS
+########################################################################################################################
+
+write.csv(data, "~/Desktop/GitHub/TBI/TBI final data.csv", row.names=FALSE)
 
 ########################################################################################################################
 ########################################################################################################################
@@ -347,6 +408,21 @@ axis(1, at=c(0.3, 1.3, 2.3), labels=c("Mild", "Moderate", "Severe"))
 abline(h=159, col="red", xpd=FALSE)
 abline(h=90, col="red", xpd=FALSE)
 
+# Does waiting time to MD predict death?
+summary(glm(death ~ log1p(cdmd_wait) + gcs, data=data, family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait) + gcs_cat, data=data, family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait), data=data[data$gcs_cat=="mild",], family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait), data=data[data$gcs_cat=="moderate",], family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait), data=data[data$gcs_cat=="severe",], family="binomial"))
+
+summary(glm(death ~ log1p(cdmd_wait) + rti, data=data, family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait), data=data[data$rti==0,], family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait), data=data[data$rti==1,], family="binomial"))
+summary(glm(death ~ log1p(cdmd_wait), data=data[data$rti==2,], family="binomial"))
+
+library(lme4)
+summary(glmer(death ~ log1p(cdmd_wait) + (1|gcs), data=data, family="binomial"))
+
 ########################################################################################################################
 ########################################################################################################################
 # CHECK WHETHER MISSING DATA IS NON-RANDOM WITH RESPECT TO PATIENT DEATH
@@ -387,55 +463,55 @@ sum(!is.na(data$gcs_tot))/nrow(data)	#0.995
 
 # All data
 # looks only at whether fluids and oxygen were given (n = 1348)
-mod = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data2, family="binomial")
+mod = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data, family="binomial")
 summary(mod) # gcs, fluids (+), oxygen (+)
 # fluids time (n = 512)
-mod2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data2, family="binomial")
+mod2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data, family="binomial")
 summary(mod2)	# gcs, oxygen
 # oxygen time (n = 60)
-mod3 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data2, family="binomial")
+mod3 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data, family="binomial")
 summary(mod3)	# gcs
 
 # Data for gcs 3-8
-data3 = data2[which(data$gcs_tot<9),]
+data2 = data[which(data$gcs_tot<9),]
 # looks only at whether fluids and oxygen were given (n = 178)
-mod38.1 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data3, family="binomial")
+mod38.1 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data2, family="binomial")
 summary(mod38.1)	# gcs, oxygen
 # fluids time (n = 83)
-mod38.2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data3, family="binomial")
+mod38.2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data2, family="binomial")
 summary(mod38.2)	# gcs
 # oxygen time (n = 42)
-mod38.3 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data3, family="binomial")
+mod38.3 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data2, family="binomial")
 summary(mod38.3)
 
 # Data for gcs 9-13
-data4 = data2[which(data2$gcs_tot>8 & data2$gcs_tot<14),]
+data3 = data[which(data$gcs_tot>8 & data$gcs_tot<14),]
 # looks only at whether fluids and oxygen were given (299 df)
-mod913.1 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data4, family="binomial")
+mod913.1 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data3, family="binomial")
 summary(mod913.1)	# gcs, cdmd, fluids, oxygen
 # fluids time (n = 123)
-mod913.2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data4, family="binomial")
-summary(mod913.2)	# Oxygen
+#mod913.2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data3, family="binomial")
+#summary(mod913.2)	# Oxygen
 # oxygen time (n = 8)
-#mod914.3 = glm(death ~ gcs_tot + male + age + bp_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data4, family="binomial")
+#mod914.3 = glm(death ~ gcs_tot + male + age + bp_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data3, family="binomial")
 #summary(mod914.3)
 
 # Data for gcs 14-15
-data5 = data2[which(data2$gcs_tot>13),]
+data4 = data[which(data$gcs_tot>13),]
 # looks only at whether fluids and oxygen were given ()
-mod15.1 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data5, family="binomial")
+mod15.1 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + fluids0 + oxygen, data=data4, family="binomial")
 summary(mod15.1)	# age, ox_low
 # fluids time ()
-mod15.2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data5, family="binomial")
+mod15.2 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(fluids_wait) + oxygen, data=data4, family="binomial")
 summary(mod15.2)	# NA
-mod15.3 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data5, family="binomial")
-summary(mod15.3)	# NA
+#mod15.3 = glm(death ~ gcs_tot + male + age + bp_low + ox_low + log1p(cdmd_wait) + log1p(oxygen_wait) + fluids0, data=data4, family="binomial")
+#summary(mod15.3)	# NA
 
 # Analysis of only stage 2 and 3 hypertensive patients (68 df)
 data.bp = data[which(data$sys_bp>159),]
 ox_low = data.bp$pulse_ox
 ox_low[which(ox_low < 92)] = 1; ox_low[which(ox_low > 91)] = 0
-cbind(data.bp, ox_low)
+data.bp = cbind(data.bp, ox_low)
 mod.bp = glm(death ~ gcs_tot + sys_bp + ox_low + fluids + oxygen, data=data.bp, family="binomial")
 summary(mod.bp)	# gcs, fluids
 
@@ -443,7 +519,7 @@ summary(mod.bp)	# gcs, fluids
 data.bp2 = data[which(data$sys_bp<90),]
 ox_low = data.bp2$pulse_ox
 ox_low[which(ox_low < 92)] = 1; ox_low[which(ox_low > 91)] = 0
-cbind(data.bp, ox_low)
+data.bp2 = cbind(data.bp2, ox_low)
 mod.bp2 = glm(death ~ gcs_tot + sys_bp + ox_low + fluids + oxygen, data=data.bp2, family="binomial")
 summary(mod.bp2)	# gcs
 
