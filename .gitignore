@@ -6,3 +6,6 @@
 *.Rhistory
 *.Rapp.history
 
+# ignore data file
+DATA*
+
