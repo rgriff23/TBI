@@ -1,6 +1,8 @@
 
 # Read data into R
-data <- read.csv("~/Desktop/TBI/PietrobonTBIRegistry_DATA_2015-09-17_1418.csv", header=TRUE, stringsAsFactors=FALSE)
+data <- read.csv("~/Desktop/GitHub/TBI/DATA_Aug1_2016.csv", header=TRUE, stringsAsFactors=FALSE)
+
+library(plyr)
 
 ########################################################################################################################
 ########################################################################################################################
@@ -8,46 +10,33 @@ data <- read.csv("~/Desktop/TBI/PietrobonTBIRegistry_DATA_2015-09-17_1418.csv", 
 ########################################################################################################################
 ########################################################################################################################
 
-# How many entries for time variables?
-sum(data$time_arrival != "")		#1961
-sum(data$cdmd_arrival != "")		#1959
-sum(data$oxygen_time != "")		#79	
-sum(data$fluids_time != "")		#693
-
-# Convert time variables to class POSIXct (arbitrarily make date 1/1/15)
+# Convert time variables to class POSIXct (arbitrarily make date 1/1/15, deidentifies final data, which can go on github)
 data$time_arrival <- as.POSIXct(strptime(paste("01/01/2015", data$time_arrival), "%m/%d/%Y %H:%M"))
 data$cdmd_arrival <- as.POSIXct(strptime(paste("01/01/2015", data$cdmd_arrival), "%m/%d/%Y %H:%M"))
 data$oxygen_time <- as.POSIXct(strptime(paste("01/01/2015", data$oxygen_time), "%m/%d/%Y %H:%M"))
 data$fluids_time <- as.POSIXct(strptime(paste("01/01/2015", data$fluids_time), "%m/%d/%Y %H:%M"))
 
-# Check for patient care times that appear to occur 'before' patient arrival times
-# Make patient care dates 01/02/15 in cases where that would lead to a time difference
-# of <10 hours and remove suspect rows. Also remove large outliers.
-data[which((data$cdmd_arrival-data$time_arrival)<0),c("study_id", "time_arrival", "cdmd_arrival")]
-cdmd_keep <- c(213, 941, 981, 1021, 1088, 1096, 1478, 1671, 1683, 1689, 1771, 1827, 1922, 1945)
-cdmd_drop <- c(25, 131, 703, 913, 1518)
-data[cdmd_keep, "cdmd_arrival"] <- as.POSIXct(strptime(paste("01/02/2015", strftime(data[cdmd_keep, "cdmd_arrival"], "%H:%M")), "%m/%d/%Y %H:%M"))
-data <- data[-cdmd_drop,]
-rownames(data) <- 1:nrow(data)
-data[which((data$oxygen_time-data$time_arrival)<0),c("study_id", "time_arrival", "oxygen_time")]
-oxygen_drop <- c(856, 1431, 40) # 40 is a positive outlier, took 3 hours to get patient oxygen
-data <- data[-oxygen_drop,]
-rownames(data) <- 1:nrow(data)
-data[which((data$fluids_time-data$time_arrival)<0),c("study_id", "time_arrival", "fluids_time")]
-fluids_keep <- c(459, 491, 603, 608, 635, 650, 656, 907, 1015, 1043, 1082, 1098, 1281, 1348, 1352, 1430, 1470, 1471, 1485, 1499, 1587, 1596, 1659, 1681, 1691, 1705, 1718, 1722, 1763, 1819, 1914, 1937, 1953, 1976)
-fluids_drop <- c(844, 1169, 1242, 1317, 1357, 1476, 1530, 1715)
-data[fluids_keep, "fluids_time"] <- as.POSIXct(strptime(paste("01/02/2015", strftime(data[fluids_keep, "fluids_time"], "%H:%M")), "%m/%d/%Y %H:%M"))
-data <- data[-fluids_drop,]
-rownames(data) <- 1:nrow(data)
-fluids_drop2 <- c(3, 495, 1067, 1348)	# positive outliers (>8 hours)
-data <- data[-fluids_drop2,]
-rownames(data) <- 1:nrow(data)
+# Drop known problem cases
+drop <- c(755, 987, 1441, 1483, 1564)
+drop <- which(data$study_id %in% drop)
+data <- data[-drop,]
+rm(drop)
 
-### NEED TO MAKE THIS SO WAIT TIMES ARE SIMPLE NUMERIC VECTORS
+# Identify cases where treatment time occurs the day after patient arrival, and change the date to 1/2/2015
+change <- which((data$cdmd_arrival-data$time_arrival)<0)
+data[change,"cdmd_arrival"] <- as.POSIXct(strptime(paste("01/02/2015", strftime(data[change, "cdmd_arrival"], "%H:%M")), "%m/%d/%Y %H:%M"))
+change <- which((data$fluids_time-data$time_arrival)<0)
+data[change,"fluids_time"] <- as.POSIXct(strptime(paste("01/02/2015", strftime(data[change, "fluids_time"], "%H:%M")), "%m/%d/%Y %H:%M"))
+rm(change)
+
+# Drop outliers, which are probably errors (>10 hour wait time for any treatment)
+data <- data[-which(difftime(data$cdmd_arrival, data$time_arrival, units="hours")>10),]
+data <- data[-which(difftime(data$fluids_time, data$time_arrival, units="hours")>10),]
+
 # Define new waiting time variables and add to dataframe
-cdmd_wait <- c(data$cdmd_arrival - data$time_arrival) #secs 
-oxygen_wait <- c(data$oxygen_time - data$time_arrival)  #mins
-fluids_wait <- c(data$fluids_time - data$time_arrival)  #secs
+cdmd_wait <- as.numeric(difftime(data$cdmd_arrival, data$time_arrival, units="secs")) #secs 
+oxygen_wait <- as.numeric(difftime(data$oxygen_time, data$time_arrival, units="secs"))  #secs
+fluids_wait <- as.numeric(difftime(data$fluids_time, data$time_arrival, units="secs"))  #secs
 data <- cbind(data, cdmd_wait, oxygen_wait, fluids_wait)
 
 ########################################################################################################################
@@ -57,37 +46,37 @@ data <- cbind(data, cdmd_wait, oxygen_wait, fluids_wait)
 ########################################################################################################################
 
 # Hypotension = 1
-bp_low <- data$sys_bp
-bp_low[which(bp_low < 90)] <- 1
-bp_low[which(bp_low > 89)] <- 0
+bp_low <- ifelse(data$sys_bp < 90, 1, 0)
 
 # Hypoxic = 1
-ox_low <- data$pulse_ox
-ox_low[which(ox_low < 92)] <- 1
-ox_low[which(ox_low > 91)] <- 0
+ox_low <- ifelse(data$pulse_ox < 92, 1, 0)
 
 # Fluids given = 1
-fluids0 <- data$fluids
-fluids0[which(fluids0 > 0)] <- 1
+fluids0 <- ifelse(data$fluids > 0, 1, 0)
 
 # Define GCS categories: mild, moderate, and severe
-gcs_cat <- rep(0, nrow(data))
+gcs_cat <- rep(NA, nrow(data))
 gcs_cat[data$gcs_tot < 9] <- "severe"
 gcs_cat[data$gcs_tot > 8 & data$gcs_tot < 14] <- "moderate"
 gcs_cat[data$gcs_tot > 13] <- "mild"
-gcs_cat[gcs_cat=="0"] <- NA
+gcs_cat <- factor(gcs_cat, levels=c("moderate", "mild", "severe"))
 
 # Define CTAS levels
-CTAS <- rep(0, nrow(data))
+CTAS <- rep(NA, nrow(data))
 CTAS[data$gcs_tot < 9] <- "1" # < 1 min
 CTAS[data$gcs_tot > 8 & data$gcs_tot < 14] <- "2" # < 15 mins
 CTAS[data$gcs_tot > 13] <- "3-5" # < 120 mins
-CTAS[CTAS =="0"] <- NA
+
+# Define binary variables for CTAS_ontime (on time = 1)
+CTAS_ontime <- rep(NA, nrow(data))
+CTAS_ontime[CTAS=="1" & !is.na(CTAS)] <- ifelse(data[CTAS=="1" & !is.na(CTAS),"cdmd_wait"]<61, 1, 0)
+CTAS_ontime[CTAS=="2" & !is.na(CTAS)] <- ifelse(data[CTAS=="2" & !is.na(CTAS),"cdmd_wait"]<901, 1, 0)
+CTAS_ontime[CTAS=="3-5" & !is.na(CTAS)] <- ifelse(data[CTAS=="3-5" & !is.na(CTAS),"cdmd_wait"]<7201, 1, 0)
 
 # Define SATS levels
 
 # Add new variables to dataframe
-data <- cbind(data, bp_low, ox_low, fluids0, gcs_cat, CTAS)
+data <- cbind(data, bp_low, ox_low, fluids0, gcs_cat, CTAS, CTAS_ontime)
 
 ########################################################################################################################
 ########################################################################################################################
@@ -96,66 +85,107 @@ data <- cbind(data, bp_low, ox_low, fluids0, gcs_cat, CTAS)
 ########################################################################################################################
 
 # Patient enrollment and sex
-nrow(data) # 1966 patients enrolled
-table(data$male) # 355 females, 1611 males
+nrow(data) # 2216 patients enrolled
+table(data$male) # 400 females, 1808 males
+
+# Data completeness
+sum(!is.na(data$time_arrival))/nrow(data) # 2189 patient arrival times (98.8%)
+sum(!is.na(data$gcs_tot))/nrow(data) # 2202 recorded GCS (99.4%)
+sum(!is.na(data$cdmd_arrival))/nrow(data) #2186 physician arrival times (98.6%)
+sum(!is.na(data$fluids0))/nrow(data) # 2201 recorded whether fluids given (99.3%)
+sum(!is.na(data$fluids_time))/sum(data$fluids0, na.rm=T)	# 776 fluids delivery times (74.9%)
+sum(!is.na(data$oxygen))/nrow(data) # 2204 recorded whether oxygen given (99.5%)
+sum(!is.na(data$oxygen_time))/sum(data$oxygen, na.rm=T)	# 87 oxygen delivery times	(100%)
+sum(!is.na(data$death))/nrow(data)  # 1946 recorded whether patient died (87.8%)
 
 # Proportion of hypotension, hypoxia, GCS mild, GCS moderate, GCS severe, and death
-table(data$bp_low, exclude=NULL)[2]/sum(table(data$bp_low)) # 4% hypotensive
-table(data$ox_low, exclude=NULL)[2]/sum(table(data$ox_low)) # 11.8% hypoxic
-table(data$gcs_cat, exclude=NULL)[1]/sum(table(data$gcs_cat)) # 75.7% GCS mild
-table(data$gcs_cat, exclude=NULL)[2]/sum(table(data$gcs_cat)) # 11.8% GCS moderate
-table(data$gcs_cat, exclude=NULL)[3]/sum(table(data$gcs_cat)) # 12.5% GCS severe
-table(data$death, exclude=NULL)[2]/sum(table(data$death)) # 10.2% died
+table(data$bp_low, exclude=NULL)[2]/sum(table(data$bp_low)) # 4.1% hypotensive
+table(data$ox_low, exclude=NULL)[2]/sum(table(data$ox_low)) # 11.5% hypoxic
+table(data$gcs_cat, exclude=NULL)[1]/sum(table(data$gcs_cat)) # 75.8% GCS mild
+table(data$gcs_cat, exclude=NULL)[2]/sum(table(data$gcs_cat)) # 12.0% GCS moderate
+table(data$gcs_cat, exclude=NULL)[3]/sum(table(data$gcs_cat)) # 12.2% GCS severe
+table(data$death, exclude=NULL)[2]/sum(table(data$death)) # 10.3% died
 
 # Proportion of hypotension receiving fluids and hypoxic receiving oxygen
-sum(data$bp_low & data$fluids0, na.rm=T)/sum(data$bp_low, na.rm=T) # 73.9% of hypotensive patients got fluids
-sum(data$ox_low & data$oxygen, na.rm=T)/sum(data$ox_low, na.rm=T) # 28.1% of hypoxic patients got oxygen
+sum(data$bp_low & data$fluids0, na.rm=T)/sum(data$bp_low, na.rm=T) # 75.0% of hypotensive patients got fluids
+sum(data$ox_low & data$oxygen, na.rm=T)/sum(data$ox_low, na.rm=T) # 29.2% of hypoxic patients got oxygen
 
 # Proportion of CTAS levels seen by MD on time
 sum(data$CTAS=="1" & data$cdmd_wait<=60, na.rm=T)/sum(data$CTAS=="1", na.rm=T) # 3.7% seen in < 1 minute
 sum(data$CTAS=="2" & data$cdmd_wait<=900, na.rm=T)/sum(data$CTAS=="2", na.rm=T) # 71.7% seen in < 15 minutes
-sum(data$CTAS=="3-5" & data$cdmd_wait<=7200, na.rm=T)/sum(data$CTAS=="3-5", na.rm=T)  # 95.4% seen in < 2 hours
+sum(data$CTAS=="3-5" & data$cdmd_wait<=7200, na.rm=T)/sum(data$CTAS=="3-5", na.rm=T)  # 95.6% seen in < 2 hours
 
 # Median and range of time to oxygen, time to fluids, and time to physician arrival
 median(data$cdmd_wait, na.rm=T)/60 # 10 minutes
-range(data$cdmd_wait, na.rm=T)/60/60 # min = 0 minutes, max = 11.75 hours???
+range(data$cdmd_wait, na.rm=T)/60/60 # min = 0 minutes, max = 10 hours
 median(data$fluids_wait, na.rm=T)/60 # 20 minutes
-range(data$fluids_wait, na.rm=T)/60/60 # min = 0 minutes, max = 5.17 hours???
-median(data$oxygen_wait, na.rm=T) # 10 minutes
-range(data$oxygen_wait, na.rm=T) # min = 2 minutes, max = 70 minutes
+range(data$fluids_wait, na.rm=T)/60/60 # min = 0 minutes, max = 9.93 hours
+median(data$oxygen_wait, na.rm=T)/60 # 10 minutes
+range(data$oxygen_wait, na.rm=T)/60 # min = 2 minutes, max = 3.13 hours
 
 ########################################################################################################################
 ########################################################################################################################
-# STATISTICAL MODELS 
+# ANALYSIS OF TREATMENT 
 ########################################################################################################################
 ########################################################################################################################
 
-# Logistic regression of oxygen administration ~ hypoxia + GCS
-lm.ox <- glm(oxygen ~ ox_low + gcs_cat, data=data, family="binomial")
-summary(lm.ox)
+# Gaussian regression of wait times ~ time of day
+hour <- as.factor(format(data$time_arrival, format='%H'))
+data <- cbind(data, hour)
+lm.timeday <- lm(log1p(cdmd_wait)~hour)
+summary(lm.timeday)
+lm.timeday2 <- lm(log1p(fluids_wait)~hour)
+summary(lm.timeday2)
+lm.timeday3 <- lm(log1p(oxygen_wait)~hour)
+summary(lm.timeday3)
+# Median, min and max wait times for each period
+ddply(data, .(hour), function(x) {min(x$cdmd_wait, na.rm=T)/60})
+ddply(data, .(hour), function(x) {median(x$cdmd_wait, na.rm=T)/60})
+ddply(data, .(hour), function(x) {max(x$cdmd_wait, na.rm=T)/60})
+
+
+# Add new time variable
+peakhours <- ifelse(hour %in% 6:17, 1, 0)
+data <- cbind(data, peakhours)
 
 # Logistic regression of fluids administration ~ hypotension + GCS
 lm.fl <- glm(fluids0 ~ bp_low + gcs_cat, data=data, family="binomial")
 summary(lm.fl)
 
-# Gaussian regression of MD wait time ~ GCS + time of day
-lm.cdmd_wait <- lm(cdmd_wait ~ gcs_cat, data=data)
-summary(lm.cdmd_wait)
+# Logistic regression of oxygen administration ~ hypoxia + GCS
+lm.ox <- glm(oxygen ~ ox_low + gcs_cat, data=data, family="binomial")
+summary(lm.ox)
 
-# Gaussian regression of oxygen wait time ~ hypoxia + GCS + time of day
-lm.ox_wait <- lm(oxygen_wait ~ ox_low + gcs_cat, data=data)
+# Gaussian regression of fluids wait time ~ hypotension + GCS
+lm.fl_wait <- lm(log1p(fluids_wait) ~ bp_low + gcs_cat, data=data)
+summary(lm.fl_wait)
+
+# Gaussian regression of oxygen wait time ~ hypoxia + GCS
+lm.ox_wait <- lm(log1p(oxygen_wait) ~ ox_low + gcs_cat, data=data)
 summary(lm.ox_wait)
 
-# Gaussian regression of fluids wait time ~ hypotension + GCS + time of day
-lm.fl_wait <- lm(fluids_wait ~ bp_low + gcs_cat, data=data)
-summary(lm.fl_wait)
+# Gaussian regression of MD wait time ~ GCS
+lm.cdmd_wait <- lm(log1p(cdmd_wait) ~ gcs_cat + peakhours, data=data)
+summary(lm.cdmd_wait)
+
+########################################################################################################################
+########################################################################################################################
+# ANALYSIS OF PATIENT OUTCOMES 
+########################################################################################################################
+########################################################################################################################
 
 # Logistic regression of death ~ hypoxia + hypotension + GCS
 lm.x <- glm(death ~ ox_low + bp_low + gcs_cat, data=data, family="binomial")
 summary(lm.x)
 
-# Chi-squared of death ~ ontime
-
+# Exact tests for death ~ ontime
+tab1 <- table(data$death[data$CTAS=="1"], data$CTAS_ontime[data$CTAS=="1"])
+tab2 <- table(data$death[data$CTAS=="2"], data$CTAS_ontime[data$CTAS=="2"])
+tab3 <- table(data$death[data$CTAS=="3-5"], data$CTAS_ontime[data$CTAS=="3-5"])
+dimnames(tab1) <- dimnames(tab2) <- dimnames(tab3) <- list(death=c("N", "Y"), ontime=c("N", "Y"))
+fisher.test(tab1) # Level 1
+fisher.test(tab2) # Level 2
+# Don't do test for Level 3 because we can't distinguish 3-5 and there is a cell with 0
 
 ########################################################################################################################
 ########################################################################################################################
@@ -168,46 +198,22 @@ summary(lm.x)
 ### waiting time distributions / predictors of waiting time
 ############################################################
 
-# Histograms of waiting times (how are waiting times distributed)
-quartz()
-layout(matrix(1:3, 1, 3))
-hist(cdmd_wait/60/60, main="", xlab="Time to MD arrival (hours)", col="gray")
-abline(v=median(cdmd_wait/60/60, na.rm=T), col="red") #10mins
-mtext("median = 10 minutes", line=1, cex=0.6)
-hist(oxygen_wait, main="", xlab="Time to oxygen (minutes)", ylab="", col="gray")
-abline(v=median(oxygen_wait, na.rm=T), col="red") #10mins
-mtext("median = 10 minutes", line=1, cex=0.6)
-hist(fluids_wait/60/60, main="", xlab="Time to fluids (hours)", ylab="", col="gray")
-abline(v=median(fluids_wait/60/60, na.rm=T), col="red") #20 mins
-mtext("median = 20 minutes", line=1, cex=0.6)
-
-# Histograms of log1p waiting times (how does log transformation affect the wait time variables)
-quartz()
-layout(matrix(1:3, 1, 3))
-hist(log1p(cdmd_wait), main="", xlab="Time to MD arrival (log1p secs)", col="gray")
-abline(v=mean(log1p(cdmd_wait), na.rm=T), col="red") #10.8mins
-mtext("mean = 10.8 minutes", line=1, cex=0.6)
-hist(log1p(oxygen_wait), main="", xlab="Time to oxygen (log1p minutes)", ylab="", col="gray")
-abline(v=mean(log1p(oxygen_wait), na.rm=T), col="red") #10.3mins
-mtext("mean = 10.3 minutes", line=1, cex=0.6)
-hist(log1p(fluids_wait), main="", xlab="Time to fluids (log1p secs)", ylab="", col="gray")
-abline(v=mean(log1p(fluids_wait), na.rm=T), col="red") #22 mins
-mtext("mean = 22 minutes", line=1, cex=0.6)
-
+# NOT FOR MANUSCRIPT
 # Boxplots of log MD waiting times across different GCS (are sicker patients being seen more quickly?)
 quartz()
 layout(matrix(1,1,1))
 gcs <- as.factor(data$gcs_tot)
 data <- cbind(data, gcs)
-boxplot(log1p(cdmd_wait)~gcs, col="gray", main="Log MD wait times across incoming GCS", ylab="Log1p MD wait time", xlab="Incoming patient GCS")
-abline(h=mean(log1p(cdmd_wait), na.rm=T), col="red")
+boxplot(cdmd_wait~gcs, col="gray", main="MD wait times across incoming GCS", ylab="MD wait time", xlab="Incoming patient GCS")
+abline(h=median(cdmd_wait), na.rm=T), col="red")
 
+# NOT FOR MANUSCRIPT
 # Boxplots of log MD waiting times across different times of day (does time of day affect how quickly patients are seen?)
 quartz()
 layout(matrix(1,1,1))
 hour <- as.factor(format(data$time_arrival, format='%H'))
-boxplot(log1p(cdmd_wait)~hour, col="gray", main="Log MD wait times across hours of the day", ylab="Log1p MD wait time", xlab="Hour of patient arrival")
-abline(h=mean(log1p(cdmd_wait), na.rm=T), col="red")
+boxplot(cdmd_wait~hour, col="gray", main="MD wait times across hours of the day", ylab="MD wait time", xlab="Hour of patient arrival")
+abline(h=median(cdmd_wait), na.rm=T), col="red")
 # Linear regression of MD waiting times as a function of time of day
 summary(lm(log1p(cdmd_wait)~hour))
 
